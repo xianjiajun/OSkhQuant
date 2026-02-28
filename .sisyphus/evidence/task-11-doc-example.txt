@@ -1,0 +1,7 @@
+rc=0
+note: Doc example validated for import/callable only (no real backtest executed).
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html
+callable True
+stderr:
+

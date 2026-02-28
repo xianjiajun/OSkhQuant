@@ -1,0 +1,61 @@
+== engine-import ==
+cmd: python -c
+code: import khFrame; from khFrame import KhQuantFramework; print("engine-import-ok")
+rc: 0
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html
+engine-import-ok
+== api-import ==
+cmd: python -c
+code: from api import run_backtest; print(callable(run_backtest))
+rc: 0
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html
+True
+== parser-missing ==
+cmd: python -c
+code: from backtest_result import parse_backtest_dir; parse_backtest_dir(".sisyphus/drafts/does_not_exist")
+rc: 1
+stderr:
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from backtest_result import parse_backtest_dir; parse_backtest_dir(".sisyphus/drafts/does_not_exist")
+                                                    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\xian_stu\Desktop\project\stock\OSkhQuant\backtest_result.py", line 40, in parse_backtest_dir
+    raise FileNotFoundError(f"Backtest output_dir not found: {dir_path}")
+FileNotFoundError: Backtest output_dir not found: .sisyphus\drafts\does_not_exist
+== parser-happy ==
+cmd: python -c
+code: from backtest_result import parse_backtest_dir; r=parse_backtest_dir(".sisyphus/drafts/fake_run"); print(r.trades.shape, r.daily_stats.shape)
+rc: 0
+stdout:
+(0, 13) (0, 7)
+== policy-default ==
+cmd: python -c
+code: from api import _check_period_mismatch_policy; from khConfig import KhConfig; cfg=KhConfig(".sisyphus/drafts/mismatch_config.kh"); _check_period_mismatch_policy(cfg, allow_period_mismatch=False)
+rc: 1
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html
+stderr:
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from api import _check_period_mismatch_policy; from khConfig import KhConfig; cfg=KhConfig(".sisyphus/drafts/mismatch_config.kh"); _check_period_mismatch_policy(cfg, allow_period_mismatch=False)
+                                                                                                                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\xian_stu\Desktop\project\stock\OSkhQuant\api.py", line 41, in _check_period_mismatch_policy
+    raise PeriodMismatchError(
+        "Period mismatch: data period does not match trigger type. Set allow_period_mismatch=True to continue."
+    )
+khFrame.PeriodMismatchError: Period mismatch: data period does not match trigger type. Set allow_period_mismatch=True to continue.
+== policy-override ==
+cmd: python -c
+code: from api import _check_period_mismatch_policy; from khConfig import KhConfig; cfg=KhConfig(".sisyphus/drafts/mismatch_config.kh"); _check_period_mismatch_policy(cfg, allow_period_mismatch=True); print("continued")
+rc: 0
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html
+[WARNING] Period mismatch allowed: data_period=1d trigger_type=tick expected=tick
+continued
+== smoke-import-only ==
+cmd: python smoke_dual_mode.py
+rc: 0
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html

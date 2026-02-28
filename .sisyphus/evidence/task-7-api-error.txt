@@ -1,0 +1,11 @@
+rc=1
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html
+stderr:
+Traceback (most recent call last):
+  File "<string>", line 2, in <module>
+    run_backtest('.sisyphus/drafts/mismatch_config.kh', '.sisyphus/drafts/does_not_exist.py')
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\xian_stu\Desktop\project\stock\OSkhQuant\api.py", line 63, in run_backtest
+    raise FileNotFoundError(f"Strategy file not found: {strategy_path}")
+FileNotFoundError: Strategy file not found: .sisyphus\drafts\does_not_exist.py

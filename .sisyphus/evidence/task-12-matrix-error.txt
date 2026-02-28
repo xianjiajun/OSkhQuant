@@ -1,0 +1,7 @@
+== smoke-invalid-args ==
+cmd: python smoke_dual_mode.py --config .sisyphus/drafts/mismatch_config.kh --strategy .sisyphus/drafts/does_not_exist.py
+rc: 1
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html
+stderr:
+

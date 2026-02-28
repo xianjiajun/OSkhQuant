@@ -1,0 +1,6 @@
+rc=0
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html
+PeriodMismatchError: Period mismatch: data period does not match trigger type. Set allow_period_mismatch=True to continue.
+stderr:
+

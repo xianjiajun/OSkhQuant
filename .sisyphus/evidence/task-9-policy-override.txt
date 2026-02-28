@@ -1,0 +1,9 @@
+rc=0
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html
+[WARNING] Period mismatch allowed: data_period=1d trigger_type=tick expected=tick
+continued
+
+
+stderr:
+

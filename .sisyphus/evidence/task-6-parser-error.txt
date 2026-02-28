@@ -1,0 +1,11 @@
+rc=1
+stdout:
+
+stderr:
+Traceback (most recent call last):
+  File "<string>", line 2, in <module>
+    parse_backtest_dir('.sisyphus/drafts/does_not_exist')
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\xian_stu\Desktop\project\stock\OSkhQuant\backtest_result.py", line 40, in parse_backtest_dir
+    raise FileNotFoundError(f"Backtest output_dir not found: {dir_path}")
+FileNotFoundError: Backtest output_dir not found: .sisyphus\drafts\does_not_exist

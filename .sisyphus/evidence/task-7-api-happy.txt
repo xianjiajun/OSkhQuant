@@ -1,0 +1,3 @@
+rc=124
+note: Attempted real api.run_backtest with .sisyphus/drafts/match_config.kh and .sisyphus/drafts/empty_strategy.py.
+note: Run exceeded 120s and was terminated (environment/runtime dependent).

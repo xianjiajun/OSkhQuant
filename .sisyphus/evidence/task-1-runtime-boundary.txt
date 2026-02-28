@@ -1,0 +1,7 @@
+rc=0
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html
+[INFO] 2026-02-27 23:09:38.711133 - smoke
+ok
+stderr:
+

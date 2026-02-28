@@ -1,0 +1,10 @@
+rc=0
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html
+使用日志目录: D:\Users\xian_stu\Desktop\project\stock\OSkhQuant\logs
+日志文件配置成功: D:\Users\xian_stu\Desktop\project\stock\OSkhQuant\logs\app.log
+gui-thread-stop-ok
+
+
+stderr:
+

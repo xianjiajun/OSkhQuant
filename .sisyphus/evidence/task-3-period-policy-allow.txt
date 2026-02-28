@@ -1,0 +1,21 @@
+rc=0
+stdout:
+xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html
+[DEBUG] KhQuantFramework.__init__ 开始
+[DEBUG] config_path: .sisyphus/drafts/mismatch_config.kh
+[DEBUG] strategy_file: .sisyphus/drafts/empty_strategy.py
+[DEBUG] 准备加载策略模块: .sisyphus/drafts/empty_strategy.py
+[DEBUG] load_strategy 被调用，参数: .sisyphus/drafts/empty_strategy.py
+[DEBUG] 策略文件绝对路径: D:\Users\xian_stu\Desktop\project\stock\OSkhQuant\.sisyphus\drafts\empty_strategy.py
+[DEBUG] 模块名: empty_strategy
+[DEBUG] spec 创建成功
+[DEBUG] 模块对象创建成功
+[DEBUG] 模块已添加到sys.modules: empty_strategy
+[DEBUG] 模块__file__属性: D:\Users\xian_stu\Desktop\project\stock\OSkhQuant\.sisyphus\drafts\empty_strategy.py
+[DEBUG] 准备执行模块代码
+[DEBUG] 模块代码执行完成
+[DEBUG] 策略模块加载成功
+[WARNING] 2026-02-27 23:09:48.619838 - 警告：周期不匹配但允许继续运行 - 数据周期:日K线, 触发类型:Tick触发
+continued
+stderr:
+

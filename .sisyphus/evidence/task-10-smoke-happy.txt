@@ -1,0 +1,5 @@
+rc=0
+import: ok
+run_backtest callable: True
+mode: import-only
+note: pass --config and --strategy to run a real backtest

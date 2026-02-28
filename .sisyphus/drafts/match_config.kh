@@ -1,0 +1,28 @@
+{
+  "system": {
+    "run_mode": "backtest",
+    "userdata_path": "",
+    "session_id": 0,
+    "check_interval": 3
+  },
+  "account": {
+    "account_id": "test_account",
+    "account_type": "STOCK"
+  },
+  "data": {
+    "kline_period": "tick",
+    "dividend_type": "none",
+    "fields": ["open", "high", "low", "volume"],
+    "stock_list": ["000001.SZ"]
+  },
+  "backtest": {
+    "start_time": "20240101",
+    "end_time": "20240102",
+    "init_capital": 1000000,
+    "benchmark": "000300.SH",
+    "min_volume": 0,
+    "trigger": {
+      "type": "tick"
+    }
+  }
+}

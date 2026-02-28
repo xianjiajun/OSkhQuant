@@ -1,0 +1,10 @@
+rc=0
+note: Static check: filenames present in khFrame.py
+stdout:
+trades.csv True
+daily_stats.csv True
+summary.csv True
+benchmark.csv True
+config.csv True
+stderr:
+

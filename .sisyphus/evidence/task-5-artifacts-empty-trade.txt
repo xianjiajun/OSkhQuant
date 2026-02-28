@@ -1,0 +1,6 @@
+rc=0
+note: Static check: encoding and empty schemas exist; full runtime no-signal backtest not executed
+stdout:
+True
+stderr:
+
