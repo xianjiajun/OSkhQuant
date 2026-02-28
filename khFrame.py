@@ -21,11 +21,24 @@ from khQTTools import KhQuTools, determine_pool_type, format_price, round_price,
 from khConfig import KhConfig
 
 import numpy as np
-from PyQt5.QtCore import Qt, QMetaObject, Q_ARG, QObject
-from PyQt5.QtWidgets import QMessageBox
 import pandas as pd
 import os
 import holidays
+
+qt_message_box = None
+pyqt_available = False
+
+
+class PeriodMismatchError(RuntimeError):
+    """Raised when data period and trigger period mismatch in headless mode."""
+
+try:
+    from PyQt5.QtWidgets import QMessageBox as _QMessageBox
+
+    qt_message_box = _QMessageBox
+    pyqt_available = True
+except ImportError:
+    pass
 
 # 简单的GUI类，用于处理日志记录
 class DummySignal:
@@ -47,6 +60,178 @@ class SimpleGUI:
     def on_strategy_finished(self):
         """策略完成回调"""
         print(f"[INFO] {datetime.datetime.now()} - 策略执行完成")
+
+
+class RuntimeInteraction:
+    """运行时交互边界，隔离引擎与GUI实现。"""
+
+    def log(self, message, level="INFO"):
+        raise NotImplementedError
+
+    def progress(self, percent: int):
+        raise NotImplementedError
+
+    def confirm_period_mismatch(self, title, message):
+        raise NotImplementedError
+
+    def on_finished(self):
+        raise NotImplementedError
+
+    def open_result(self, backtest_dir):
+        raise NotImplementedError
+
+    def get_init_data_enabled(self, default=True):
+        return default
+
+
+class HeadlessRuntimeInteraction(RuntimeInteraction):
+    """无GUI场景的默认运行时交互实现。"""
+
+    def __init__(self, fallback_logger=None):
+        self._fallback_logger = fallback_logger or SimpleGUI()
+
+    def log(self, message, level="INFO"):
+        self._fallback_logger.log_message(message, level)
+
+    def progress(self, percent: int):
+        _ = percent
+
+    def confirm_period_mismatch(self, title, message):
+        self.log(f"{title}: {message}", "WARNING")
+        return True
+
+    def on_finished(self):
+        if hasattr(self._fallback_logger, "on_strategy_finished"):
+            self._fallback_logger.on_strategy_finished()
+
+    def open_result(self, backtest_dir):
+        self.log(f"回测结果目录: {backtest_dir}", "INFO")
+
+
+class GuiRuntimeInteraction(RuntimeInteraction):
+    """GUI场景运行时交互适配器。"""
+
+    def __init__(self, gui, fallback_logger=None):
+        self.gui = gui
+        self._fallback_logger = fallback_logger or SimpleGUI()
+
+    def log(self, message, level="INFO"):
+        if self.gui and hasattr(self.gui, "log_message"):
+            self.gui.log_message(message, level)
+            return
+        self._fallback_logger.log_message(message, level)
+
+    def progress(self, percent: int):
+        if self.gui and hasattr(self.gui, "progress_signal"):
+            try:
+                self.gui.progress_signal.emit(int(percent))
+            except Exception:
+                pass
+
+    def confirm_period_mismatch(self, title, message):
+        if not (pyqt_available and self.gui and qt_message_box is not None):
+            self.log(f"{title}: {message}", "WARNING")
+            return True
+
+        def show_dialog():
+            msg_box_cls = qt_message_box
+            if msg_box_cls is None:
+                raise RuntimeError("QMessageBox unavailable")
+            msg_box = msg_box_cls(self.gui)
+            msg_box.setIcon(msg_box_cls.Warning)
+            msg_box.setWindowTitle(title)
+            msg_box.setText(message)
+            msg_box.setStandardButtons(msg_box_cls.Yes | msg_box_cls.No)
+            msg_box.setDefaultButton(msg_box_cls.No)
+
+            yes_button = msg_box.button(msg_box_cls.Yes)
+            no_button = msg_box.button(msg_box_cls.No)
+            if yes_button is not None:
+                yes_button.setText("继续运行")
+            if no_button is not None:
+                no_button.setText("停止运行")
+
+            return msg_box.exec_() != msg_box_cls.No
+
+        try:
+            if hasattr(self.gui, "invoke"):
+                from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+                connection = getattr(Qt, 'BlockingQueuedConnection')
+
+                result_holder = {"value": True}
+
+                def invoke_dialog():
+                    result_holder["value"] = show_dialog()
+
+                invoked = QMetaObject.invokeMethod(
+                    self.gui,
+                    'invoke',
+                    connection,
+                    Q_ARG('PyQt_PyObject', invoke_dialog)
+                )
+                if invoked:
+                    return bool(result_holder["value"])
+
+            return show_dialog()
+        except Exception:
+            self.log(f"{title}: {message}", "WARNING")
+            return True
+
+    def on_finished(self):
+        if not self.gui:
+            return
+        if hasattr(self.gui, "on_strategy_finished"):
+            if pyqt_available:
+                try:
+                    from PyQt5.QtCore import QMetaObject, Qt
+                    connection = getattr(Qt, 'QueuedConnection')
+
+                    invoked = QMetaObject.invokeMethod(
+                        self.gui,
+                        'on_strategy_finished',
+                        connection
+                    )
+                    if invoked:
+                        return
+                except Exception:
+                    pass
+            self.gui.on_strategy_finished()
+
+    def open_result(self, backtest_dir):
+        if not self.gui:
+            return
+        gui_obj = self.gui
+        if hasattr(gui_obj, "show_backtest_result_signal"):
+            try:
+                gui_obj.show_backtest_result_signal.emit(backtest_dir)
+                return
+            except Exception:
+                pass
+        if hasattr(gui_obj, "show_backtest_result"):
+            if pyqt_available:
+                try:
+                    from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+                    connection = getattr(Qt, 'QueuedConnection')
+
+                    QMetaObject.invokeMethod(
+                        gui_obj,
+                        'show_backtest_result',
+                        connection,
+                        Q_ARG(str, backtest_dir)
+                    )
+                    return
+                except Exception:
+                    pass
+            self.log(f"回测结果目录: {backtest_dir}", "WARNING")
+
+    def get_init_data_enabled(self, default=True):
+        return default
+
+
+def create_runtime_interaction(gui, fallback_logger=None):
+    if gui is not None and not isinstance(gui, SimpleGUI):
+        return GuiRuntimeInteraction(gui, fallback_logger=fallback_logger)
+    return HeadlessRuntimeInteraction(fallback_logger=fallback_logger)
 
 # 触发器基类
 class TriggerBase:
@@ -495,7 +680,15 @@ class MyTraderCallback(XtQuantTraderCallback):
 class KhQuantFramework:
     """量化交易框架主类"""
     
-    def __init__(self, config_path: str, strategy_file: str, trader_callback=None):
+    def __init__(
+        self,
+        config_path: str,
+        strategy_file: str,
+        trader_callback=None,
+        *,
+        init_data_enabled: Optional[bool] = None,
+        allow_period_mismatch: bool = False,
+    ):
         """初始化框架
         
         Args:
@@ -531,6 +724,9 @@ class KhQuantFramework:
         
         # 添加简单的GUI属性用于日志记录
         self.gui = SimpleGUI()
+
+        # 运行时交互边界（默认无界面实现）
+        self.runtime_interaction = create_runtime_interaction(self.gui, fallback_logger=self.gui)
         
         # 加载策略模块
         print(f"[DEBUG] 准备加载策略模块: {strategy_file}")
@@ -547,6 +743,12 @@ class KhQuantFramework:
         self.run_mode = self.config.run_mode
         
         self.trader_callback = trader_callback  # 保存交易回调函数
+        self.init_data_enabled = init_data_enabled
+        self.allow_period_mismatch = bool(allow_period_mismatch)
+        self.last_backtest_dir = None
+
+        if self.trader_callback and hasattr(self.trader_callback, 'gui'):
+            self.runtime_interaction = create_runtime_interaction(self.trader_callback.gui, fallback_logger=self.gui)
         
         # 创建触发器
         self.trigger = TriggerFactory.create_trigger(self, self.config.config_dict)
@@ -584,11 +786,7 @@ class KhQuantFramework:
         
     def _log(self, message, level="INFO"):
         """根据是否存在回调函数选择日志记录方式"""
-        if self.trader_callback and hasattr(self.trader_callback, 'gui'):
-            self.trader_callback.gui.log_message(message, level)
-        else:
-            # 在调试模式下，trader_callback可能不存在，使用print输出
-            print(f"[{level}] {datetime.datetime.now()} - {message}")
+        self.runtime_interaction.log(message, level)
 
     def _should_log(self):
         """检查是否应该输出日志（用于性能优化）
@@ -911,6 +1109,9 @@ class KhQuantFramework:
             
     def run(self):
         """启动框架"""
+        if self.trader_callback and hasattr(self.trader_callback, 'gui'):
+            self.runtime_interaction = create_runtime_interaction(self.trader_callback.gui, fallback_logger=self.gui)
+
         # 记录策略开始运行时间
         self.start_time = time.time()
         start_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -932,10 +1133,9 @@ class KhQuantFramework:
             self.daily_price_cache = {}
             self._cached_benchmark_close = {}
             
-            # 直接从设置界面读取是否初始化数据的配置
-            from PyQt5.QtCore import QSettings
-            settings = QSettings('KHQuant', 'StockAnalyzer')
-            init_data_enabled = settings.value('init_data_enabled', True, type=bool)
+            init_data_enabled = self.init_data_enabled
+            if init_data_enabled is None:
+                init_data_enabled = True
             
             if self.trader_callback:
                 self.trader_callback.gui.log_message(f"数据初始化设置: {'启用' if init_data_enabled else '禁用'}", "INFO")
@@ -1194,56 +1394,37 @@ class KhQuantFramework:
 
 是否继续运行回测？"""
 
-                # 使用QMetaObject.invokeMethod在主线程中显示弹窗
-                if self.trader_callback and hasattr(self.trader_callback, 'gui'):
-                    # 创建一个标志变量来存储用户选择
-                    user_choice = [None]  # 使用列表以便在lambda中修改
-                    
-                    def show_dialog():
-                        msg_box = QMessageBox(self.trader_callback.gui)
-                        msg_box.setIcon(QMessageBox.Warning)
-                        msg_box.setWindowTitle("周期不匹配警告")
-                        msg_box.setText(message)
-                        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-                        msg_box.setDefaultButton(QMessageBox.No)
-                        
-                        # 设置按钮文本
-                        yes_button = msg_box.button(QMessageBox.Yes)
-                        no_button = msg_box.button(QMessageBox.No)
-                        yes_button.setText("继续运行")
-                        no_button.setText("停止运行")
-                        
-                        user_choice[0] = msg_box.exec_()
-                    
-                    # 在主线程中执行弹窗显示
-                    QMetaObject.invokeMethod(
-                        self.trader_callback.gui,
-                        "invoke",
-                        Qt.BlockingQueuedConnection,
-                        Q_ARG("PyQt_PyObject", show_dialog)
+                stable_error_message = (
+                    "Period mismatch: data period does not match trigger type. "
+                    "Set allow_period_mismatch=True to continue."
+                )
+
+                if self.allow_period_mismatch:
+                    self.runtime_interaction.log(
+                        f"警告：周期不匹配但允许继续运行 - 数据周期:{data_name}, 触发类型:{trigger_name}",
+                        "WARNING"
                     )
-                    
-                    # 处理用户选择
-                    if user_choice[0] == QMessageBox.No:
-                        # 用户选择停止运行
-                        if self.trader_callback:
-                            self.trader_callback.gui.log_message("用户取消运行：数据周期与触发类型不匹配", "WARNING")
-                        self.is_running = False
-                        return
-                    else:
-                        # 用户选择继续运行，记录警告
-                        if self.trader_callback:
-                            self.trader_callback.gui.log_message(f"警告：继续运行不匹配配置 - 数据周期:{data_name}, 触发类型:{trigger_name}", "WARNING")
-                else:
-                    # 没有GUI回调的情况，直接在日志中记录警告
-                    print(f"警告：数据周期({data_period})与触发类型({trigger_type})不匹配")
-                    
+                    return
+
+                has_gui_interaction = bool(self.trader_callback and hasattr(self.trader_callback, 'gui'))
+                if not has_gui_interaction:
+                    raise PeriodMismatchError(stable_error_message)
+
+                should_continue = self.runtime_interaction.confirm_period_mismatch("周期不匹配警告", message)
+                if not should_continue:
+                    self.runtime_interaction.log("用户取消运行：数据周期与触发类型不匹配", "WARNING")
+                    self.is_running = False
+                    return
+                self.runtime_interaction.log(
+                    f"警告：继续运行不匹配配置 - 数据周期:{data_name}, 触发类型:{trigger_name}",
+                    "WARNING"
+                )
+
+        except PeriodMismatchError:
+            raise
         except Exception as e:
             # 检查过程中出现异常，记录但不影响回测继续运行
-            if self.trader_callback:
-                self.trader_callback.gui.log_message(f"周期一致性检查时出错: {str(e)}", "WARNING") 
-            else:
-                print(f"周期一致性检查时出错: {str(e)}")
+            self.runtime_interaction.log(f"周期一致性检查时出错: {str(e)}", "WARNING")
         
     def _run_backtest(self):
         """回测模式"""
@@ -1704,7 +1885,7 @@ class KhQuantFramework:
             if self.trader_callback:
                 self.trader_callback.gui.log_message("回测进度: 0.00%", "INFO")
                 # 强制发送0%进度信号，确保进度条立即显示
-                self.trader_callback.gui.progress_signal.emit(0)
+                self.runtime_interaction.progress(0)
                 # 注意：不要在子线程中调用 QApplication.processEvents()
                 # 这会导致GUI线程阻塞和潜在的线程安全问题
             
@@ -1817,8 +1998,7 @@ class KhQuantFramework:
                 if should_show_progress and self.trader_callback:
                     progress = (processed_times / total_times) * 100
                     # 直接发送进度信号更新进度条（高效，不走日志系统）
-                    if hasattr(self.trader_callback.gui, 'progress_signal'):
-                        self.trader_callback.gui.progress_signal.emit(int(progress))
+                    self.runtime_interaction.progress(int(progress))
                     # 只在需要输出日志时才记录进度文本
                     if self._should_log():
                         self.trader_callback.gui.log_message(f"回测进度: {progress:.2f}%", "INFO")
@@ -2224,19 +2404,9 @@ class KhQuantFramework:
                         self.trader_callback.gui.log_message(f"执行最后一天的盘后回调时出错: {str(e)}", "ERROR")
                 
             # 回测完成后发送信号
+            self.is_running = False
             if self.trader_callback:
-                # 先停止策略并更新状态
-                self.is_running = False
-                try:
-                    from PyQt5.QtCore import QMetaObject, Qt
-                    QMetaObject.invokeMethod(
-                        self.trader_callback.gui,
-                        "on_strategy_finished",
-                        Qt.QueuedConnection
-                    )
-                except Exception:
-                    # 如果invoke失败，退回到直接调用，但至少捕获异常
-                    self.trader_callback.gui.on_strategy_finished()
+                self.runtime_interaction.on_finished()
                 
                 # 显示100%进度
                 self.trader_callback.gui.log_message("回测进度: 100.00%", "INFO")
@@ -2301,120 +2471,101 @@ class KhQuantFramework:
                         self.trader_callback.gui.log_message("回测期间没有产生每日统计数据", "WARNING")
                 _safe_to_csv(daily_stats_df, os.path.join(backtest_dir, "daily_stats.csv"), "每日统计数据")
 
-                # 保存回测汇总指标
+                # 保存回测汇总指标（即使统计样本不足也写出稳定表头）
                 try:
-                    if len(daily_stats_df) >= 2:
-                        init_capital = self.backtest_records['init_capital']
-                        final_capital = daily_stats_df['total_asset'].iloc[-1]
-                        trade_days = len(daily_stats_df)
+                    init_capital = self.backtest_records.get('init_capital', 0) or 0
+                    trade_days = len(daily_stats_df)
+                    total_asset_series = pd.Series(dtype=float)
+                    if 'total_asset' in daily_stats_df.columns:
+                        total_asset_series = pd.to_numeric(daily_stats_df['total_asset'], errors='coerce').dropna()
 
-                        # 计算总收益率
-                        total_return = (final_capital - init_capital) / init_capital * 100 if init_capital > 0 else 0
+                    final_capital = float(total_asset_series.iloc[-1]) if len(total_asset_series) > 0 else float(init_capital)
+                    total_return = 0.0
+                    annual_return = 0.0
+                    max_drawdown = 0.0
 
-                        # 计算年化收益率: ((1+R)^(250/n)-1)*100%
-                        if trade_days > 0 and init_capital > 0:
-                            total_return_decimal = (final_capital / init_capital) - 1
-                            annual_return = (pow(1 + total_return_decimal, 250/trade_days) - 1) * 100
-                        else:
-                            annual_return = 0
+                    if trade_days >= 2 and init_capital > 0 and len(total_asset_series) > 0:
+                        total_return = (final_capital - init_capital) / init_capital * 100
+                        total_return_decimal = (final_capital / init_capital) - 1
+                        annual_return = (pow(1 + total_return_decimal, 250 / trade_days) - 1) * 100
 
-                        # 计算最大回撤
-                        cummax = daily_stats_df['total_asset'].cummax()
-                        drawdown = (cummax - daily_stats_df['total_asset']) / cummax * 100
-                        max_drawdown = drawdown.max()
+                        cummax = total_asset_series.cummax()
+                        drawdown = (cummax - total_asset_series) / cummax * 100
+                        max_drawdown = float(drawdown.max()) if len(drawdown) > 0 else 0.0
+                    elif self.trader_callback:
+                        self.trader_callback.gui.log_message("每日统计数据不足2条，summary.csv写入默认汇总值", "WARNING")
 
-                        # 保存汇总指标
-                        summary = {
-                            'init_capital': init_capital,
-                            'final_capital': final_capital,
-                            'total_return': total_return,
-                            'annual_return': annual_return,
-                            'max_drawdown': max_drawdown,
-                            'trade_days': trade_days
-                        }
-                        _safe_to_csv(pd.DataFrame([summary]), os.path.join(backtest_dir, "summary.csv"), "回测汇总")
+                    summary = {
+                        'init_capital': init_capital,
+                        'final_capital': final_capital,
+                        'total_return': total_return,
+                        'annual_return': annual_return,
+                        'max_drawdown': max_drawdown,
+                        'trade_days': trade_days
+                    }
+                    _safe_to_csv(pd.DataFrame([summary]), os.path.join(backtest_dir, "summary.csv"), "回测汇总")
                 except Exception as e:
                     logging.warning(f"保存回测汇总指标时出错: {str(e)}")
+                    fallback_summary = pd.DataFrame([{
+                        'init_capital': 0,
+                        'final_capital': 0,
+                        'total_return': 0,
+                        'annual_return': 0,
+                        'max_drawdown': 0,
+                        'trade_days': 0
+                    }])
+                    _safe_to_csv(fallback_summary, os.path.join(backtest_dir, "summary.csv"), "回测汇总")
 
-                # 保存基准指数数据
-                benchmark_code = self.config.config_dict["backtest"]["benchmark"]
+                # 保存基准指数数据（失败时也写出空表头）
+                benchmark_file = os.path.join(backtest_dir, "benchmark.csv")
+                benchmark_df = pd.DataFrame(columns=['date', 'close'])
+                benchmark_code = self.config.config_dict.get("backtest", {}).get("benchmark", "")
                 try:
-                    # 先下载数据确保可用
-                    xtdata.download_history_data(
-                        stock_code=benchmark_code,
-                        period="1d",
-                        start_time=self.config.backtest_start,
-                        end_time=self.config.backtest_end,
-                    )
-                    
-                    benchmark_data = xtdata.get_market_data(
-                        field_list=['close'],
-                        stock_list=[benchmark_code],
-                        period='1d',
-                        start_time=self.config.backtest_start,
-                        end_time=self.config.backtest_end,
-                    )
-                    
-                    if self.trader_callback:
-                        self.trader_callback.gui.log_message(
-                            f"基准数据获取结果: {benchmark_data.keys()}", 
-                            "INFO"
+                    if benchmark_code:
+                        xtdata.download_history_data(
+                            stock_code=benchmark_code,
+                            period="1d",
+                            start_time=self.config.backtest_start,
+                            end_time=self.config.backtest_end,
                         )
 
-                    if benchmark_data and 'close' in benchmark_data and len(benchmark_data['close']) > 0:
-                        closes = benchmark_data['close'].values[0]  # 获取收盘价数据
-                        if len(closes) > 0:
-                            # 直接从benchmark_data中获取日期数据
-                            # 获取交易日期索引
-                            if 'date' in benchmark_data:
-                                dates = benchmark_data['date'][0]  # 使用benchmark_data中的日期
-                            elif hasattr(benchmark_data, 'index') and benchmark_data.index is not None and not isinstance(benchmark_data.index, pd.RangeIndex):
-                                dates = benchmark_data.index  # 有些情况下日期可能在索引中
-                            elif hasattr(benchmark_data['close'], 'columns') and len(benchmark_data['close'].columns) > 0:
-                                # 从columns中获取日期（日期作为列名出现的情况）
-                                date_cols = [col for col in benchmark_data['close'].columns if str(col).isdigit()]
+                        benchmark_data = xtdata.get_market_data(
+                            field_list=['close'],
+                            stock_list=[benchmark_code],
+                            period='1d',
+                            start_time=self.config.backtest_start,
+                            end_time=self.config.backtest_end,
+                        )
+
+                        if benchmark_data and 'close' in benchmark_data and len(benchmark_data['close']) > 0:
+                            close_frame = benchmark_data['close']
+                            closes = np.array(close_frame.values[0]) if len(close_frame.values) > 0 else np.array([])
+                            dates = None
+
+                            if 'date' in benchmark_data and len(benchmark_data['date']) > 0:
+                                dates = benchmark_data['date'][0]
+                            elif hasattr(close_frame, 'columns') and len(close_frame.columns) > 0:
+                                date_cols = [col for col in close_frame.columns if str(col).isdigit()]
                                 if date_cols:
-                                    # 将列名转换为日期对象
                                     dates = pd.to_datetime(date_cols, format='%Y%m%d')
-                                    # 确保closes的顺序与dates匹配
-                                    closes = np.array([benchmark_data['close'].iloc[0][col] for col in date_cols])
-                                else:
-                                    # 如果没有日期数据，才使用日期范围（不推荐）
-                                    self.trader_callback.gui.log_message(
-                                        "警告：基准数据中没有日期信息，将使用日期范围替代，可能不准确",
-                                        "WARNING"
-                                    )
-                                    dates = pd.date_range(
-                                        start=pd.to_datetime(self.config.backtest_start, format='%Y%m%d'),
-                                        end=pd.to_datetime(self.config.backtest_end, format='%Y%m%d'),
-                                        freq='B'  # 使用工作日频率
-                                    )
-                                
-                                # 创建包含日期和收盘价的DataFrame
-                                df = pd.DataFrame({
-                                    'date': dates,
-                                    'close': closes
+                                    closes = np.array([close_frame.iloc[0][col] for col in date_cols])
+                            elif hasattr(close_frame, 'index') and len(close_frame.index) > 0:
+                                dates = close_frame.index
+
+                            if dates is not None and len(closes) > 0:
+                                min_len = min(len(dates), len(closes))
+                                benchmark_df = pd.DataFrame({
+                                    'date': list(dates)[:min_len],
+                                    'close': list(closes)[:min_len]
                                 })
-                                
-                                # 保存到benchmark.csv
-                                benchmark_file = os.path.join(backtest_dir, "benchmark.csv")
-                                _safe_to_csv(df, benchmark_file, "基准数据")
-                                
-                                if self.trader_callback:
-                                    self.trader_callback.gui.log_message(
-                                        f"基准指数数据已保存到 {benchmark_file}, 共 {len(df)} 条记录",
-                                        "INFO"
-                                    )
-                        else:
-                            if self.trader_callback:
-                                self.trader_callback.gui.log_message(f"基准指数 {benchmark_code} 收盘价数据为空", "WARNING")
-                    else:
-                        if self.trader_callback:
-                            self.trader_callback.gui.log_message(f"基准指数 {benchmark_code} 数据获取失败", "WARNING")
+                    elif self.trader_callback:
+                        self.trader_callback.gui.log_message("未配置基准指数代码，benchmark.csv将写入空表", "WARNING")
                 except Exception as e:
                     if self.trader_callback:
                         self.trader_callback.gui.log_message(f"获取基准指数数据时出错: {str(e)}", "ERROR")
                     logging.error(f"获取基准指数数据时出错: {str(e)}", exc_info=True)
+
+                _safe_to_csv(benchmark_df, benchmark_file, "基准数据")
                 
                 # 保存策略文件副本
                 strategy_file_path = self.config.config_dict.get("strategy_file", "")
@@ -2456,24 +2607,48 @@ class KhQuantFramework:
                         self.trader_callback.gui.log_message(f"保存完整配置文件时出错: {str(e)}", "ERROR")
                     logging.error(f"保存完整配置文件时出错: {str(e)}", exc_info=True)
                 
-                # 保存回测配置信息
+                # 保存回测配置信息（局部配置缺失也保证写出）
+                def _safe_get_nested(data, path, default=""):
+                    current = data
+                    for key in path:
+                        if isinstance(current, dict) and key in current:
+                            current = current[key]
+                        else:
+                            return default
+                    return default if current is None else current
+
+                try:
+                    actual_start_time = datetime.datetime.fromtimestamp(self.start_time).strftime("%Y-%m-%d %H:%M:%S") if self.start_time else ""
+                except Exception:
+                    actual_start_time = ""
+                try:
+                    actual_end_time = datetime.datetime.fromtimestamp(self.end_time).strftime("%Y-%m-%d %H:%M:%S") if self.end_time else ""
+                except Exception:
+                    actual_end_time = ""
+                try:
+                    stock_list_value = ','.join(self.get_stock_list()) if hasattr(self, 'get_stock_list') else ''
+                except Exception:
+                    stock_list_value = ""
+
                 config_info = {
-                    'start_time': self.backtest_records['start_time'],
-                    'end_time': self.backtest_records['end_time'],
-                    'init_capital': self.backtest_records['init_capital'],
-                    'benchmark': self.config.config_dict["backtest"]["benchmark"],
-                    'strategy_file': self.config.config_dict.get("strategy_file", ""),  # 从配置字典中获取策略文件路径
-                    'actual_start_time': datetime.datetime.fromtimestamp(self.start_time).strftime("%Y-%m-%d %H:%M:%S") if self.start_time else "",
-                    'actual_end_time': datetime.datetime.fromtimestamp(self.end_time).strftime("%Y-%m-%d %H:%M:%S") if self.end_time else "",
-                    'total_runtime_seconds': self.total_runtime,
-                    'total_runtime_formatted': self._format_runtime(self.total_runtime),
-                    # 保存股票池信息
-                    'stock_list': ','.join(self.get_stock_list()) if hasattr(self, 'get_stock_list') else '',
-                    'min_volume': self.config.config_dict["backtest"].get("min_volume", 100),
-                    'kline_period': self.config.config_dict["data"].get("kline_period", "1m"),
-                    'dividend_type': self.config.config_dict["data"].get("dividend_type", "front")
+                    'start_time': self.backtest_records.get('start_time', ''),
+                    'end_time': self.backtest_records.get('end_time', ''),
+                    'init_capital': self.backtest_records.get('init_capital', ''),
+                    'benchmark': _safe_get_nested(self.config.config_dict, ["backtest", "benchmark"], ""),
+                    'strategy_file': _safe_get_nested(self.config.config_dict, ["strategy_file"], ""),
+                    'actual_start_time': actual_start_time,
+                    'actual_end_time': actual_end_time,
+                    'total_runtime_seconds': getattr(self, 'total_runtime', ''),
+                    'total_runtime_formatted': self._format_runtime(self.total_runtime) if hasattr(self, 'total_runtime') else "",
+                    'stock_list': stock_list_value,
+                    'min_volume': _safe_get_nested(self.config.config_dict, ["backtest", "min_volume"], ""),
+                    'kline_period': _safe_get_nested(self.config.config_dict, ["data", "kline_period"], ""),
+                    'dividend_type': _safe_get_nested(self.config.config_dict, ["data", "dividend_type"], "")
                 }
                 _safe_to_csv(pd.DataFrame([config_info]), os.path.join(backtest_dir, "config.csv"), "配置数据")
+
+                # Record last backtest output directory for headless API.
+                self.last_backtest_dir = backtest_dir
                 
                 if self.trader_callback:
                     self.trader_callback.gui.log_message(
@@ -2485,14 +2660,7 @@ class KhQuantFramework:
                         f"回测总耗时: {self._format_runtime(self.total_runtime)}",
                         "INFO"
                     )
-                    # 只有在GUI模式下（gui是QObject）才调用显示结果窗口
-                    if isinstance(self.trader_callback.gui, QObject):
-                        QMetaObject.invokeMethod(
-                            self.trader_callback.gui,
-                            "show_backtest_result",
-                            Qt.QueuedConnection,
-                            Q_ARG(str, backtest_dir)
-                        )
+                    self.runtime_interaction.open_result(backtest_dir)
                 
             except Exception as e:
                 if self.trader_callback:

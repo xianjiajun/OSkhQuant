@@ -16,6 +16,32 @@
 
 ---
 
+## Headless Python API (Backtest)
+
+This repo can run backtests without the GUI via a small Python API.
+
+```python
+from api import run_backtest
+
+result = run_backtest(
+    "path/to/your_config.kh",
+    "path/to/your_strategy.py",
+    allow_period_mismatch=False,  # default: fail-fast on mismatch
+    init_data_enabled=None,       # None => engine default True; GUI default is False
+)
+
+print(result.output_dir)
+print(result.trades.shape)
+```
+
+Artifacts written under `backtest_results/<run_dir>/`:
+- `trades.csv`
+- `daily_stats.csv`
+- `summary.csv`
+- `benchmark.csv`
+- `config.csv`
+
+
 # 第一章：引言：为什么选择看海量化
 
 ## 1.1 关于我

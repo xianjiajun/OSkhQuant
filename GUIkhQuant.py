@@ -148,10 +148,14 @@ class StrategyThread(QThread):
         """线程运行函数"""
         try:
             # 创建框架实例
+            init_data_enabled = bool(
+                QSettings('KHQuant', 'StockAnalyzer').value('init_data_enabled', False, type=bool)
+            )
             self.framework = KhQuantFramework(
                 self.config_path,
                 self.strategy_file,
-                trader_callback=self.trader_callback
+                trader_callback=self.trader_callback,
+                init_data_enabled=init_data_enabled
             )
 
             # 发送状态信号
